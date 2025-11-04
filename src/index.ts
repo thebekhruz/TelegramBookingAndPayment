@@ -31,6 +31,8 @@ async function main() {
 
   bot.launch();
   console.log('✅ Bot is running!\n');
+  
+  console.log('💳 Payment: Using Telegram native invoices (Click.uz & Payme via BotFather)\n');
 
   console.log('📋 Conference Details:');
   console.log(`   Name: ${config.conference.name}`);
