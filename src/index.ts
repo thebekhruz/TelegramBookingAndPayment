@@ -1,66 +1,48 @@
-import express from 'express';
-import { config } from './config/config';
-import { initializeDatabase } from './database/schema';
-import { BookingService } from './database/bookingService';
-import { PaymeService } from './payments/payme';
-import { ClickService } from './payments/click';
-import { TelegramBot } from './bot/bot';
-import { setupWebhooks } from './server/webhooks';
+import { config } from './config';
+import { initDatabase, BookingService } from './database';
+import { createBot } from './bot';
 
 async function main() {
-  try {
-    console.log('Starting Conference Booking Bot...');
+  console.log('🚀 Starting Telegram Conference Booking Bot...\n');
 
-    // Initialize database
-    console.log('Initializing database...');
-    const db = initializeDatabase(config.database.path);
-    const bookingService = new BookingService(db);
+  // Initialize database
+  console.log('📦 Initializing database...');
+  const db = initDatabase(config.database.path);
+  const bookingService = new BookingService(db);
+  console.log('✅ Database ready!\n');
 
-    // Initialize payment services
-    console.log('Initializing payment services...');
-    const paymeService = new PaymeService(bookingService);
-    const clickService = new ClickService(bookingService);
+  // Initialize bot
+  console.log('🤖 Starting Telegram bot...');
+  const bot = createBot(bookingService);
 
-    // Initialize Express server for webhooks
-    console.log('Starting webhook server...');
-    const app = express();
-    setupWebhooks(app, paymeService, clickService);
+  bot.launch();
+  console.log('✅ Bot is running!\n');
 
-    const server = app.listen(config.server.port, () => {
-      console.log(`Webhook server listening on port ${config.server.port}`);
-    });
+  console.log('📋 Conference Details:');
+  console.log(`   Name: ${config.conference.name}`);
+  console.log(`   Date: ${config.conference.date}`);
+  console.log(`   Location: ${config.conference.location}`);
+  console.log(`   Price: ${config.conference.ticketPrice / 100} UZS\n`);
 
-    // Initialize Telegram bot
-    console.log('Starting Telegram bot...');
-    const bot = new TelegramBot(bookingService, paymeService, clickService);
-    bot.launch();
+  console.log('💬 Bot is ready to accept bookings!\n');
 
-    console.log('✅ Conference Booking Bot is running!');
-    console.log(`📅 Conference: ${config.conference.name}`);
-    console.log(`💰 Ticket Price: ${config.conference.ticketPrice / 100} UZS`);
-    console.log(`🌐 Webhook URL: ${config.server.webhookDomain}`);
+  // Graceful shutdown
+  process.once('SIGINT', () => {
+    console.log('\n👋 Shutting down...');
+    bot.stop('SIGINT');
+    db.close();
+    process.exit(0);
+  });
 
-    // Graceful shutdown
-    const shutdown = async () => {
-      console.log('\nShutting down gracefully...');
-      bot.stop();
-      server.close();
-      db.close();
-      console.log('Goodbye!');
-      process.exit(0);
-    };
-
-    process.once('SIGINT', shutdown);
-    process.once('SIGTERM', shutdown);
-  } catch (error) {
-    console.error('Failed to start application:', error);
-    process.exit(1);
-  }
+  process.once('SIGTERM', () => {
+    console.log('\n👋 Shutting down...');
+    bot.stop('SIGTERM');
+    db.close();
+    process.exit(0);
+  });
 }
 
-// Handle unhandled rejections
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+main().catch(error => {
+  console.error('❌ Failed to start bot:', error);
+  process.exit(1);
 });
-
-main();
