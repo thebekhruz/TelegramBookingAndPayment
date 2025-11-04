@@ -13,12 +13,11 @@
   "license": "MIT",
   "dependencies": {
     "telegraf": "^4.15.6",
-    "better-sqlite3": "^9.2.2",
+    "sqlite3": "^5.1.7",
     "dotenv": "^16.3.1"
   },
   "devDependencies": {
     "@types/node": "^20.10.6",
-    "@types/better-sqlite3": "^7.6.8",
     "typescript": "^5.3.3",
     "ts-node": "^10.9.2"
   }

@@ -32,7 +32,7 @@ export function createBot(bookingService: BookingService): Telegraf<BotContext> 
   // Start command
   bot.command('start', async (ctx) => {
     const userId = ctx.from.id;
-    const existingBooking = bookingService.getBookingByUserId(userId);
+    const existingBooking = await bookingService.getBookingByUserId(userId);
 
     if (existingBooking) {
       await ctx.reply(
@@ -58,7 +58,7 @@ export function createBot(bookingService: BookingService): Telegraf<BotContext> 
   // Book command
   bot.command('book', async (ctx) => {
     const userId = ctx.from.id;
-    const existingBooking = bookingService.getBookingByUserId(userId);
+    const existingBooking = await bookingService.getBookingByUserId(userId);
 
     if (existingBooking) {
       await ctx.reply('You already have a booking! Use /mybooking to view it.');
@@ -72,7 +72,7 @@ export function createBot(bookingService: BookingService): Telegraf<BotContext> 
   // My booking command
   bot.command('mybooking', async (ctx) => {
     const userId = ctx.from.id;
-    const booking = bookingService.getBookingByUserId(userId);
+    const booking = await bookingService.getBookingByUserId(userId);
 
     if (!booking) {
       await ctx.reply('You don\'t have any bookings yet. Use /book to create one!');
@@ -94,14 +94,14 @@ export function createBot(bookingService: BookingService): Telegraf<BotContext> 
   // Cancel command
   bot.command('cancel', async (ctx) => {
     const userId = ctx.from.id;
-    const booking = bookingService.getBookingByUserId(userId);
+    const booking = await bookingService.getBookingByUserId(userId);
 
     if (!booking) {
       await ctx.reply('You don\'t have any bookings to cancel.');
       return;
     }
 
-    bookingService.deleteBooking(booking.id);
+    await bookingService.deleteBooking(booking.id);
     sessions.delete(userId);
     await ctx.reply('✅ Your booking has been cancelled. Use /book to create a new one.');
   });
@@ -125,61 +125,66 @@ export function createBot(bookingService: BookingService): Telegraf<BotContext> 
 
     const text = ctx.message.text;
 
-    switch (step) {
-      case 'awaiting_name':
-        if (text.trim().length < 2) {
-          await ctx.reply('Please enter a valid full name (at least 2 characters):');
-          return;
-        }
-        ctx.session.fullName = text.trim();
-        ctx.session.step = 'awaiting_email';
-        await ctx.reply('✉️ Great! Now enter your email address:');
-        break;
+    try {
+      switch (step) {
+        case 'awaiting_name':
+          if (text.trim().length < 2) {
+            await ctx.reply('Please enter a valid full name (at least 2 characters):');
+            return;
+          }
+          ctx.session.fullName = text.trim();
+          ctx.session.step = 'awaiting_email';
+          await ctx.reply('✉️ Great! Now enter your email address:');
+          break;
 
-      case 'awaiting_email':
-        if (!isValidEmail(text)) {
-          await ctx.reply('Please enter a valid email address:');
-          return;
-        }
-        ctx.session.email = text.trim();
-        ctx.session.step = 'awaiting_phone';
-        await ctx.reply('📱 Perfect! Now enter your phone number (e.g., +998901234567):');
-        break;
+        case 'awaiting_email':
+          if (!isValidEmail(text)) {
+            await ctx.reply('Please enter a valid email address:');
+            return;
+          }
+          ctx.session.email = text.trim();
+          ctx.session.step = 'awaiting_phone';
+          await ctx.reply('📱 Perfect! Now enter your phone number (e.g., +998901234567):');
+          break;
 
-      case 'awaiting_phone':
-        if (!isValidPhone(text)) {
-          await ctx.reply('Please enter a valid phone number:');
-          return;
-        }
-        ctx.session.phone = text.trim();
+        case 'awaiting_phone':
+          if (!isValidPhone(text)) {
+            await ctx.reply('Please enter a valid phone number:');
+            return;
+          }
+          ctx.session.phone = text.trim();
 
-        // Create booking
-        try {
-          const booking = bookingService.createBooking(
-            ctx.from!.id,
-            ctx.from!.username,
-            ctx.session.fullName!,
-            ctx.session.email!,
-            ctx.session.phone!
-          );
+          // Create booking
+          try {
+            const booking = await bookingService.createBooking(
+              ctx.from!.id,
+              ctx.from!.username,
+              ctx.session.fullName!,
+              ctx.session.email!,
+              ctx.session.phone!
+            );
 
-          ctx.session.step = undefined;
+            ctx.session.step = undefined;
 
-          await ctx.reply(
-            `✅ Booking created successfully!\n\n` +
-            `Name: ${booking.full_name}\n` +
-            `Email: ${booking.email}\n` +
-            `Phone: ${booking.phone}\n\n` +
-            `📆 ${config.conference.date}\n` +
-            `📍 ${config.conference.location}\n` +
-            `💰 Price: ${formatPrice(config.conference.ticketPrice)} UZS\n\n` +
-            `Status: ⏳ Pending\n\n` +
-            `Your booking is confirmed! Use /mybooking to view it anytime.`
-          );
-        } catch (error) {
-          await ctx.reply('An error occurred. Please try again or use /cancel to start over.');
-        }
-        break;
+            await ctx.reply(
+              `✅ Booking created successfully!\n\n` +
+              `Name: ${booking.full_name}\n` +
+              `Email: ${booking.email}\n` +
+              `Phone: ${booking.phone}\n\n` +
+              `📆 ${config.conference.date}\n` +
+              `📍 ${config.conference.location}\n` +
+              `💰 Price: ${formatPrice(config.conference.ticketPrice)} UZS\n\n` +
+              `Status: ⏳ Pending\n\n` +
+              `Your booking is confirmed! Use /mybooking to view it anytime.`
+            );
+          } catch (error) {
+            await ctx.reply('An error occurred. Please try again or use /cancel to start over.');
+          }
+          break;
+      }
+    } catch (error) {
+      console.error('Error in text handler:', error);
+      await ctx.reply('An error occurred. Please try again.');
     }
   });
 
