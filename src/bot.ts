@@ -267,7 +267,7 @@ See you at the conference! 🎉
       return;
     }
 
-    bookingService.deleteBooking(booking.id);
+    await bookingService.deleteBooking(booking.id);
     sessions.delete(userId);
     await ctx.reply(t.bookingCancelled);
   });
