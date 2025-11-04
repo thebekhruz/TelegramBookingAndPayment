@@ -5,6 +5,7 @@ dotenv.config();
 export const config = {
   telegram: {
     botToken: process.env.TELEGRAM_BOT_TOKEN || '',
+    adminUserId: process.env.ADMIN_USER_ID ? parseInt(process.env.ADMIN_USER_ID) : undefined,
   },
   conference: {
     name: process.env.CONFERENCE_NAME || 'Tech Conference 2024',
