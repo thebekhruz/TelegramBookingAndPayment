@@ -1,11 +1,10 @@
 import { Telegraf, Context } from 'telegraf';
 import { config } from './config';
-import { BookingService } from './database';
+import { BookingService, Booking } from './database';
 
 interface SessionData {
   step?: string;
   fullName?: string;
-  email?: string;
   phone?: string;
 }
 
@@ -16,6 +15,88 @@ export interface BotContext extends Context {
 export function createBot(bookingService: BookingService): Telegraf<BotContext> {
   const bot = new Telegraf<BotContext>(config.telegram.botToken);
   const sessions = new Map<number, SessionData>();
+
+  // Function to send confirmation notification to admin
+  async function sendAdminNotification(booking: Booking): Promise<void> {
+    if (!config.telegram.adminUserId) {
+      console.log('⚠️  ADMIN_USER_ID not configured. Skipping admin notification.');
+      return;
+    }
+
+    try {
+      const message = `
+🔔 **New Booking Confirmed!**
+
+👤 **Customer Details:**
+   • Name: ${booking.full_name}
+   • Username: @${booking.username || 'N/A'}
+   • Phone: ${booking.phone}
+   • User ID: ${booking.user_id}
+
+📅 **Conference:**
+   • Event: ${config.conference.name}
+   • Date: ${config.conference.date}
+   • Location: ${config.conference.location}
+   • Price: ${formatPrice(config.conference.ticketPrice)} UZS
+
+✅ Status: ${booking.status === 'confirmed' ? 'Confirmed & Paid' : 'Pending'}
+📆 Booking Date: ${booking.created_at}
+🆔 Booking ID: #${booking.id}
+      `.trim();
+
+      await bot.telegram.sendMessage(config.telegram.adminUserId, message, {
+        parse_mode: 'Markdown',
+      });
+      console.log(`✅ Admin notification sent for booking #${booking.id}`);
+    } catch (error: any) {
+      console.error('❌ Failed to send admin notification:', error.message);
+      // Don't throw - admin notification failure shouldn't break the flow
+    }
+  }
+
+  // Expose function to confirm booking and notify admin
+  (bot as any).confirmBookingAndNotify = async (bookingId: number): Promise<void> => {
+    const booking = bookingService.getBookingById(bookingId);
+    if (!booking) {
+      throw new Error(`Booking #${bookingId} not found`);
+    }
+
+    // Update booking status
+    bookingService.updateBookingStatus(bookingId, 'confirmed');
+
+    // Get updated booking
+    const updatedBooking = bookingService.getBookingById(bookingId)!;
+
+    // Notify the customer
+    try {
+      await bot.telegram.sendMessage(
+        updatedBooking.user_id,
+        `
+✅ **Payment Confirmed!**
+
+Your booking has been confirmed and payment received!
+
+📋 **Booking Details:**
+   • Name: ${updatedBooking.full_name}
+   • Phone: ${updatedBooking.phone}
+
+📅 **Conference:**
+   • ${config.conference.name}
+   • Date: ${config.conference.date}
+   • Location: ${config.conference.location}
+
+🎫 **Booking ID:** #${updatedBooking.id}
+
+See you at the conference! 🎉
+        `.trim()
+      );
+    } catch (error: any) {
+      console.error(`❌ Failed to notify customer ${updatedBooking.user_id}:`, error.message);
+    }
+
+    // Notify admin
+    await sendAdminNotification(updatedBooking);
+  };
 
   // Session middleware
   bot.use((ctx, next) => {
@@ -83,7 +164,6 @@ export function createBot(bookingService: BookingService): Telegraf<BotContext> 
     await ctx.reply(
       `${statusEmoji} Your Booking\n\n` +
       `Name: ${booking.full_name}\n` +
-      `Email: ${booking.email}\n` +
       `Phone: ${booking.phone}\n` +
       `Status: ${booking.status === 'confirmed' ? 'Confirmed' : 'Pending'}\n\n` +
       `📆 ${config.conference.date}\n` +
@@ -106,16 +186,51 @@ export function createBot(bookingService: BookingService): Telegraf<BotContext> 
     await ctx.reply('✅ Your booking has been cancelled. Use /book to create a new one.');
   });
 
+  // Admin command: Confirm booking manually (for testing)
+  bot.command('confirm', async (ctx) => {
+    // Check if user is admin
+    if (config.telegram.adminUserId && ctx.from.id !== config.telegram.adminUserId) {
+      await ctx.reply('❌ This command is only available to administrators.');
+      return;
+    }
+
+    const userId = ctx.from.id;
+    const booking = bookingService.getBookingByUserId(userId);
+
+    if (!booking) {
+      await ctx.reply('❌ You don\'t have a booking to confirm.');
+      return;
+    }
+
+    if (booking.status === 'confirmed') {
+      await ctx.reply('✅ This booking is already confirmed.');
+      return;
+    }
+
+    // Confirm booking and send notifications
+    try {
+      await (bot as any).confirmBookingAndNotify(booking.id);
+      await ctx.reply('✅ Booking confirmed! Notifications sent to customer and admin.');
+    } catch (error: any) {
+      await ctx.reply(`❌ Error: ${error.message}`);
+    }
+  });
+
   // Help command
   bot.command('help', async (ctx) => {
-    await ctx.reply(
-      '🤖 Available Commands:\n\n' +
+    const isAdmin = config.telegram.adminUserId && ctx.from.id === config.telegram.adminUserId;
+    let helpText = '🤖 Available Commands:\n\n' +
       '/start - Start the bot\n' +
       '/book - Book a conference ticket\n' +
       '/mybooking - View your booking\n' +
       '/cancel - Cancel your booking\n' +
-      '/help - Show this help message'
-    );
+      '/help - Show this help message';
+    
+    if (isAdmin) {
+      helpText += '\n\n👑 Admin Commands:\n/confirm - Confirm your booking (test)';
+    }
+
+    await ctx.reply(helpText);
   });
 
   // Handle text messages for booking flow
@@ -132,18 +247,8 @@ export function createBot(bookingService: BookingService): Telegraf<BotContext> 
           return;
         }
         ctx.session.fullName = text.trim();
-        ctx.session.step = 'awaiting_email';
-        await ctx.reply('✉️ Great! Now enter your email address:');
-        break;
-
-      case 'awaiting_email':
-        if (!isValidEmail(text)) {
-          await ctx.reply('Please enter a valid email address:');
-          return;
-        }
-        ctx.session.email = text.trim();
         ctx.session.step = 'awaiting_phone';
-        await ctx.reply('📱 Perfect! Now enter your phone number (e.g., +998901234567):');
+        await ctx.reply('📱 Great! Now enter your phone number (e.g., +998901234567):');
         break;
 
       case 'awaiting_phone':
@@ -159,7 +264,7 @@ export function createBot(bookingService: BookingService): Telegraf<BotContext> 
             ctx.from!.id,
             ctx.from!.username,
             ctx.session.fullName!,
-            ctx.session.email!,
+            '', // Email not required for now
             ctx.session.phone!
           );
 
@@ -168,7 +273,6 @@ export function createBot(bookingService: BookingService): Telegraf<BotContext> 
           await ctx.reply(
             `✅ Booking created successfully!\n\n` +
             `Name: ${booking.full_name}\n` +
-            `Email: ${booking.email}\n` +
             `Phone: ${booking.phone}\n\n` +
             `📆 ${config.conference.date}\n` +
             `📍 ${config.conference.location}\n` +
@@ -183,11 +287,9 @@ export function createBot(bookingService: BookingService): Telegraf<BotContext> 
     }
   });
 
-  return bot;
-}
-
-function isValidEmail(email: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  return bot as Telegraf<BotContext> & {
+    confirmBookingAndNotify: (bookingId: number) => Promise<void>;
+  };
 }
 
 function isValidPhone(phone: string): boolean {
